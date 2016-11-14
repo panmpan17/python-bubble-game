@@ -7,6 +7,7 @@ class Color:
 	green = (20, 240, 20)
 	blue = (20, 20, 240)
 	orange = (220, 220, 20)
+	gray = (125, 125, 125)
 
 	@staticmethod
 	def random(minc=0, maxc=255):

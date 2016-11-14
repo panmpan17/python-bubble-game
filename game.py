@@ -1,5 +1,7 @@
 import pygame
 from color import Color
+from pprint import pprint
+from random import randint
 
 class Blocks(list):
     def addblock(self, pos1, pos2):
@@ -24,16 +26,41 @@ class Image(list):
         self.findborderpoints()
 
     def findborderpoints(self):
+        equations = []
         pos1 = None
         pos2 = self[-1]
         for n, p in enumerate(self):
             pos1 = pos2
             pos2 = p
 
-            ny, m, n = self.a(pos1, pos2)
-            f = "{}y = {}x + {}"
-            print(f.format(ny, m, n))
-        print()
+            equations.append(((pos1, pos2, self.a(pos1, pos2))))
+
+        test = set()
+        for e in equations:
+            ny, m, n = e[2]
+            if ny == 0:
+                step = 1
+                if e[1][1] < e[0][1]:
+                    step = -1
+                x = int(n / -m)
+                for y in range(e[0][1], e[1][1], step):
+                    test.add((x, y))
+            elif m == 0:
+                step = 1
+                if e[1][0] < e[0][0]:
+                    step = -1
+                y = n
+                for x in range(e[0][0], e[1][0], step):
+                    test.add((x, y))
+            else:
+                step = 1
+                if e[1][1] < e[0][1]:
+                    step = -1
+                for y in range(e[0][1], e[1][1], step):
+                    x = int((n - y) / -m)
+                    test.add((x, y))
+
+        self.points = test
 
     def a(self, pos1, pos2):
         ny, m, n = None, None, None
@@ -61,15 +88,22 @@ class Sprite:
         self.color = color
         self.xrestrict = None
         self.yrestrict = None
+        self.id = str(randint(1, 1000))
+        self.detect = {"x": None, "y": None}
 
     def loadimg(self, img):
         self.img = img
 
-    def draw(self, window):
+    def draw(self, window, color=None):
         if len(self.img) > 0:
             points = []
             for p in self.img:
-                points.append((p[0] * (self.size / 400) + self.x, p[1] * (self.size / 400) + self.y))
+                x = int(p[0] * (self.size / 400) + self.x)
+                y = int(p[1] * (self.size / 400) + self.y)
+                points.append((x, y))
+            if color != None:
+                pygame.draw.polygon(window, color, points, self.border)
+                return 
             pygame.draw.polygon(window, self.color, points, self.border)
 
     def setsize(self, size):
@@ -107,6 +141,48 @@ class Sprite:
 
         self.setpos((x, y))
 
+    def detectcollision(self, sprites):
+        for s in sprites:
+            dis_x = (s.x - self.x) ** 2
+            dis_y = (s.y - self.y) ** 2
+            dis = (dis_x + dis_y) ** 0.5
+            if dis < self.size + s.size:
+                if self.detect["x"] != self.x or self.detect["y"] != self.y:
+                    self.detect.clear()
+                    self.detect["x"] = self.x
+                    self.detect["y"] = self.y
+                    for p in self.img.points:
+                        x = int(p[0] * (self.size / 400) + self.x)
+                        y = int(p[1] * (self.size / 400) + self.y)
+                        if (x, y) not in self.detect:
+                            self.detect[(x, y)] = 1
+                for s in sprites:
+                    if (s.id not in self.detect):
+                        self.detect[s.id + "x"] = s.x
+                        self.detect[s.id + "y"] = s.y
+                        for p in s.img.points:
+                            x = int(p[0] * (s.size / 400) + s.x)
+                            y = int(p[1] * (s.size / 400) + s.y)
+                            if (x, y) in self.detect:
+                                self.detect[s.id] = s.id
+                                return s.id
+                        self.detect[s.id] = False
+                        return False
+
+                    if self.detect[s.id + "x"] != s.x or self.detect[s.id + "y"] != s.y:
+                        self.detect[s.id + "x"] = s.x
+                        self.detect[s.id + "y"] = s.y
+                        for p in s.img.points:
+                            x = int(p[0] * (s.size / 400) + s.x)
+                            y = int(p[1] * (s.size / 400) + s.y)
+                            if (x, y) in self.detect:
+                                self.detect[s.id] = s.id
+                                return s.id
+                        self.detect[s.id] = False
+                        return False
+
+                    return self.detect[s.id]
+
 class Bubble(Sprite):
     def __init__(self, direction, img=[], pos=(0, 0), size=400, border=0):
         super(Bubble, self).__init__(img, pos, size, border, Color.random(minc=50, maxc=220))
@@ -129,12 +205,14 @@ class Bubble(Sprite):
         super(Bubble, self).draw(window)
 
 class Role(Sprite):
-    def __init__(self, blocks=[], img=[], pos=(0, 0), size=400, border=0, color=Color.white, gravityaffect=True):
+    def __init__(self, blocks=[], img=[], pos=(0, 0), size=400, border=0, color=Color.white, gravityaffect=True, live=3):
         super(Role, self).__init__(img, pos, size, border, color)
 
         self.blocks = blocks
+        self.live = live
         self.facing = 1
         self.gravity = 0
+        self.invincible = 0
         self.gravityaffect = gravityaffect
 
     def move(self, vecter):
@@ -149,6 +227,11 @@ class Role(Sprite):
         if self.gravityaffect:
             self.gravity += 0.098 / (1 / tick)
             self.move((0, self.gravity))
+
+        if self.invincible > 0:
+            super(Role, self).draw(window, color=Color.gray)
+            self.invincible -= 1
+            return 
 
         super(Role, self).draw(window)
 
@@ -169,33 +252,104 @@ class Role(Sprite):
                     return b[1] - self.size
         return False
 
+    def die(self):
+        if self.invincible == 0:
+            self.live -= 1
+            if self.live < 0 and self.invincible == 0:
+                print("dead")
+            self.invincible = 150
+
 class Enemy(Role):
     def __init__(self, blocks=[], img=[], pos=(0, 0), size=400, border=0, color=Color.white, gravityaffect=True):
         super(Enemy, self).__init__(blocks=blocks, img=img, pos=pos, size=size, border=border, color=color, gravityaffect=gravityaffect)
 
         self.v = 1
         self.jump = 40
+        self.live = 0
+        self.wraped = 0
+        self.bubble = []
 
     def draw(self, window):
+        self.chaseplayer()
 
+        super(Enemy, self).draw(window)
+
+    def chaseplayer(self):
         if self.x <= self.xrestrict[0] + 5:
             self.v = 1
         elif self.x + self.size  >= self.xrestrict[1] - 5:
             self.v = -1
 
-        self.move((self.v * 6, 0))
+        self.move((self.v * 4, 0))
 
-        self.jump -= 1
+    def wrapup(self):
+        self.wraped += 150
+        self.gravity = 0
+        self.gravityaffect = False
+        self.bubble = Image("bubble.pgi")
 
-        if self.jump < 0:
-            self.gravity = -30
-            self.jump = 40
+    def is_touchground(self):
+        footy = self.y + self.size
+        
+        if self.yrestrict:
+            if footy >= self.yrestrict[1]:
+                return self.yrestrict[1] - self.size
 
-        super(Enemy, self).draw(window)
+        if self.wraped == 0:
+            for b in self.blocks:
+                if footy >= b[1] and footy <= b[1] + b[3]:
+                    if self.x >= b[0] and self.x <= b[0] + b[2]:
+                        return b[1] - self.size
+
+                    bodyside = self.x + self.size
+                    if bodyside >= b[0] and bodyside <= b[0] + b[2]:
+                        return b[1] - self.size
+        return False
+
+    def draw_bubble(self, window):
+        self.wraped -= 1
+        self.move((0, -5))
+
+        if self.wraped == 0:
+            self.gravityaffect = True
+            return
+
+        if len(self.bubble) > 0:
+            points = []
+            for p in self.bubble:
+                x = int(p[0] * (self.size / 400) + self.x)
+                y = int(p[1] * (self.size / 400) + self.y)
+                points.append((x, y))
+            pygame.draw.polygon(window, Color.red, points, self.border)
+        
+        if len(self.img) > 0:
+            points = []
+            for p in self.img:
+                x = int(p[0] * ((self.size - 20) / 400) + self.x + 10)
+                y = int(p[1] * ((self.size - 20) / 400) + self.y + 10)
+                points.append((x, y))
+            pygame.draw.polygon(window, self.color, points, self.border)
 
 class App:
     def __init__(self):
-        pass
+        self.images = {
+            "player": Image("role.pgi"),
+            "bubble": Image("bubble.pgi"),
+            "enemy": Image("enemy.pgi"),
+            }
+
+        self.blocks = Blocks()
+        self.blocks.addblock((0, 400), (200, 430))
+        self.blocks.addblock((300, 300), (500, 330))
+        self.blocks.addblock((300, 200), (500, 230))
+        self.blocks.addblock((300, 100), (500, 130))
+
+        self.player = Role(img=self.images["player"], blocks=self.blocks, size=50, border=5, color=Color.orange)
+        self.player.set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
+
+        self.enemys = []
+        self.enemys.append(Enemy(img=self.images["enemy"], blocks=self.blocks, size=50, border=0, color=Color.white, pos=(450, 10)))
+        self.enemys[-1].set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
 
     def run(self):
         pygame.init()
@@ -205,70 +359,83 @@ class App:
         clock = pygame.time.Clock()
         pygame.key.set_repeat(1, 2)
 
-        images = {
-            "role": Image("role.pgi"),
-            "bubble": Image("bubble.pgi"),
-            "enemy": Image("enemy.pgi"),
-            }
-
-        blocks = Blocks()
-        blocks.addblock((0, 400), (200, 430))
-        blocks.addblock((300, 300), (500, 330))
-        blocks.addblock((0, 200), (200, 230))
-        blocks.addblock((300, 100), (500, 130))
-
-        role = Role(img=images["role"], blocks=blocks, size=50, border=5, color=Color.orange)
-        role.set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
-
-        enemy = Enemy(img=images["enemy"], blocks=blocks, size=50, border=0, color=Color.white, pos=(450, 0))
-        enemy.set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
-
-        bubbles = []
-        keycoldown = {}
+        self.bubbles = []
+        self.keycoldown = {}
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.stop()
                 if event.type == pygame.KEYDOWN:
                     keys = pygame.key.get_pressed()
-
                     if (keys[pygame.K_LMETA] or keys[pygame.K_LCTRL]) and keys[pygame.K_q]:
                         self.stop()
 
-                    if keys[pygame.K_a]:
-                        role.move((-9, 0))
-                    elif keys[pygame.K_d]:
-                        role.move((9, 0))
-                    if keys[pygame.K_w]:
-                        if pygame.K_w not in keycoldown:
-                            keycoldown[pygame.K_w] = 30
-                            role.gravity = -30
+                    self.handle_player_control(keys)
 
-                    if keys[pygame.K_SPACE]:
-                        if pygame.K_SPACE not in keycoldown:
-                            keycoldown[pygame.K_SPACE] = 6
-                            if len(bubbles) < 20:
-                                x, y = role.x, role.y
-                                bubbles.append(Bubble(role.facing, img=images["bubble"], pos=(x, y), size=30))
-                                bubbles[-1].set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
+            if len(self.keycoldown) != 0:
+                for k in list(self.keycoldown.keys()):
+                    self.keycoldown[k] -= 1
+                    if self.keycoldown[k] == -1:
+                        self.keycoldown.pop(k)
 
-            if len(keycoldown) != 0:
-                for k in list(keycoldown.keys()):
-                    keycoldown[k] -= 1
-                    if keycoldown[k] == -1:
-                        keycoldown.pop(k)
+            d = self.player.detectcollision(self.enemys)
+            if d:
+                for e in self.enemys:
+                    if e.wraped == 0:
+                        self.player.die()
+                    else:
+                        self.enemys.remove(e)
 
             self.window.fill(Color.black)
-            for b in bubbles:
-                b.draw(self.window)
-                if b.stay < 0:
-                    bubbles.remove(b)
-            enemy.draw(self.window)
-            blocks.draw(self.window)
-            role.draw(self.window)
+
+            self.handle_enemy()
+            self.handle_bubble()
+            self.blocks.draw(self.window)
+            self.player.draw(self.window)
             pygame.display.flip()
 
             clock.tick(30)
+
+    def handle_player_control(self, keys):
+        if keys[pygame.K_a]:
+            self.player.move((-9, 0))
+        elif keys[pygame.K_d]:
+            self.player.move((9, 0))
+
+        if keys[pygame.K_w]:
+            if pygame.K_w not in self.keycoldown:
+                self.keycoldown[pygame.K_w] = 20
+                self.player.gravity = -30
+
+        if keys[pygame.K_SPACE]:
+            if pygame.K_SPACE not in self.keycoldown:
+                self.keycoldown[pygame.K_SPACE] = 6
+                if len(self.bubbles) < 20:
+                    x, y = self.player.x, self.player.y
+                    self.bubbles.append(Bubble(self.player.facing, img=self.images["bubble"], pos=(x, y), size=30))
+                    self.bubbles[-1].set_restrict(xrestrict=(0, 500), yrestrict=(0, 500))
+
+    def handle_bubble(self):
+        for b in self.bubbles:
+            b.draw(self.window)
+            if b.stay < 0:
+                self.bubbles.remove(b)
+            if b.shoot > 0:
+                enemys = [e for e in self.enemys if e.wraped == 0]
+                d = b.detectcollision(enemys)
+                if d:
+                    self.bubbles.remove(b)
+                    for e in self.enemys:
+                        if e.id == d:
+                            e.wrapup()
+                            break
+
+    def handle_enemy(self):
+        for e in self.enemys:
+            if e.wraped > 0:
+                e.draw_bubble(self.window)
+                continue
+            e.draw(self.window)
 
     def stop(self):
         pygame.quit()
